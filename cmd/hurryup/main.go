@@ -10,6 +10,8 @@ var backend = flag.String("backend", "ookla", "specify the speedtest backend to 
 var output = flag.String("output", "anim", "select the output format of the speedtest [anim, json, promfile, prometheus]")
 
 func main() {
+	_, _ = speed.NewNetflix()
+	return
 	flag.Parse()
 	var s speed.Tester
 
