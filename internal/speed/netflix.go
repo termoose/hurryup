@@ -2,8 +2,12 @@ package speed
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptrace"
+	"time"
 )
 
 var TARGET_URL_ENDPOINT = "https://api.fast.com/netflix/speedtest/v2?https=true&token=%s&urlCount=%d"
@@ -48,11 +52,33 @@ func getDownloadSpeed() {
 		panic(err)
 	}
 
-	for i, t := range targets {
-		resp, _ := http.Get(t)
+	var totalDownloadTime time.Duration
+	var totalSize int64
+	for _, t := range targets {
+		var firstByteTime time.Time
+		req, _ := http.NewRequest(http.MethodGet, t, nil)
+		trace := &httptrace.ClientTrace{
+			GotFirstResponseByte: func() {
+				firstByteTime = time.Now()
+			},
+		}
 
-		fmt.Printf("%d: %s size: %d MB\n", i, t, resp.ContentLength/1024/1024)
+		req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
+		resp, err := http.DefaultTransport.RoundTrip(req)
+		if err != nil {
+			panic(err)
+		}
+
+		// Discard the body but count the number of bytes in it
+		bytes, _ := io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+
+		totalDownloadTime += time.Since(firstByteTime)
+		totalSize += bytes / 1024 / 1024 * 8
 	}
+
+	fmt.Printf("transfer time: %s size: %d Mbit speed: %f Mbit/s\n", totalDownloadTime, totalSize,
+		float64(totalSize)/totalDownloadTime.Seconds())
 }
 
 func getTargetURLs() ([]string, error) {
@@ -64,7 +90,7 @@ func getTargetURLs() ([]string, error) {
 	}
 
 	if resp.StatusCode == http.StatusForbidden {
-		return []string{}, fmt.Errorf("forbidden, invalid token")
+		return []string{}, errors.New("forbidden, invalid token")
 	}
 
 	var response targetResponse
@@ -73,6 +99,8 @@ func getTargetURLs() ([]string, error) {
 	if err != nil {
 		return []string{}, fmt.Errorf("could not parse json response: %w", err)
 	}
+
+	fmt.Printf("client: %+v\n", response.Client)
 
 	var result []string
 	for _, u := range response.Targets {
